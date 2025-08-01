@@ -18,5 +18,12 @@ public class EntityDataDto {
     private String addressCountry;
     private String placeOfIncorporation;
     private String usFatcaClassificationFinal;
+
+    // ADD THESE FIELDS - They were missing!
+    private String businessActivity;
+    private String contactPerson;
+    private String contactEmail;
+    private String contactPhone;
+
     private CreditDetailsDto creditDetails;
 }

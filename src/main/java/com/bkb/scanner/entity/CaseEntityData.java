@@ -44,6 +44,19 @@ public class CaseEntityData {
     @Column(name = "us_fatca_classification_final")
     private String usFatcaClassificationFinal;
 
+    // NEW FIELDS
+    @Column(name = "business_activity", length = 500)
+    private String businessActivity;
+
+    @Column(name = "contact_person")
+    private String contactPerson;
+
+    @Column(name = "contact_email")
+    private String contactEmail;
+
+    @Column(name = "contact_phone")
+    private String contactPhone;
+
     @Embedded
     private CreditDetails creditDetails;
 }

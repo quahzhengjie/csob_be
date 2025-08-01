@@ -51,6 +51,10 @@ public class Case extends Auditable {
     @OneToMany(mappedBy = "ownerCase", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ActivityLog> activityLogs = new ArrayList<>();
 
+    // REMOVED THE DUPLICATE FIELDS - they are already in CaseEntityData
+    // The fields contactPerson, contactEmail, contactPhone, and businessActivity
+    // should ONLY be in CaseEntityData, not here
+
     // Helper methods
     public void addRelatedParty(RelatedParty party) {
         relatedParties.add(party);

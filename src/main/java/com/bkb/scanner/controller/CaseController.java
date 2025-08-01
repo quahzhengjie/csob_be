@@ -195,4 +195,24 @@ public class CaseController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error);
         }
     }
+
+    @PatchMapping("/{caseId}/reports/{reportId}")
+    @PreAuthorize("hasAuthority('case:update')")
+    public ResponseEntity<CallReportDto> updateCallReport(
+            @PathVariable String caseId,
+            @PathVariable Long reportId,
+            @Valid @RequestBody CallReportDto reportDto) {
+        return ResponseEntity.ok(caseService.updateCallReport(caseId, reportId, reportDto));
+    }
+
+    @DeleteMapping("/{caseId}/reports/{reportId}")
+    @PreAuthorize("hasAuthority('case:update')")
+    public ResponseEntity<Void> deleteCallReport(
+            @PathVariable String caseId,
+            @PathVariable Long reportId,
+            @RequestParam(required = false, defaultValue = "Deleted by user") String reason) {
+        caseService.deleteCallReport(caseId, reportId, reason);
+        return ResponseEntity.noContent().build();
+    }
+
 }
