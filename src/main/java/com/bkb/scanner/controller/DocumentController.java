@@ -1,94 +1,152 @@
-// DocumentController.java
 package com.bkb.scanner.controller;
 
-import com.bkb.scanner.dto.DocumentDTO;
-import com.bkb.scanner.dto.DocumentValidationResultDTO;
-import com.bkb.scanner.dto.UploadResultDTO;
-import com.bkb.scanner.entity.DocumentCategory;
-import com.bkb.scanner.entity.DocumentStatus;
+import com.bkb.scanner.dto.DocumentDto;
+import com.bkb.scanner.entity.Document;
 import com.bkb.scanner.service.DocumentService;
+import com.bkb.scanner.service.DocumentService.DocumentStatusSummary;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 
 @RestController
 @RequestMapping("/documents")
-@CrossOrigin
 public class DocumentController {
 
-    private final DocumentService documentService;
-
     @Autowired
-    public DocumentController(DocumentService documentService) {
-        this.documentService = documentService;
+    private DocumentService documentService;
+
+    /**
+     * Upload document for a case with metadata
+     */
+    @PostMapping("/upload/case/{caseId}")
+    @PreAuthorize("hasAuthority('document:upload')")
+    public ResponseEntity<DocumentDto> uploadDocumentForCase(
+            @PathVariable String caseId,
+            @RequestParam("documentType") String documentType,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "expiryDate", required = false) String expiryDate,
+            @RequestParam(value = "comments", required = false) String comments) throws IOException {
+
+        System.out.println("📤 Upload request received for case:");
+        System.out.println("  - Case ID: " + caseId);
+        System.out.println("  - Document type: " + documentType);
+        System.out.println("  - File: " + file.getOriginalFilename());
+        System.out.println("  - Expiry date: " + expiryDate);
+        System.out.println("  - Comments: " + comments);
+
+        DocumentDto dto = documentService.uploadDocumentForCase(caseId, documentType, file, expiryDate, comments);
+        return new ResponseEntity<>(dto, HttpStatus.CREATED);
     }
 
-    @GetMapping("/customer/{basicNumber}")
-    public ResponseEntity<List<DocumentDTO>> getDocumentsForCustomer(@PathVariable String basicNumber) {
-        List<DocumentDTO> documents = documentService.getDocumentsForCustomer(basicNumber);
-        return ResponseEntity.ok(documents);
+    /**
+     * Upload document for a party with metadata
+     */
+    @PostMapping("/upload/party/{partyId}")
+    @PreAuthorize("hasAuthority('document:upload')")
+    public ResponseEntity<DocumentDto> uploadDocumentForParty(
+            @PathVariable String partyId,
+            @RequestParam("documentType") String documentType,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "expiryDate", required = false) String expiryDate,
+            @RequestParam(value = "comments", required = false) String comments) throws IOException {
+
+        System.out.println("📤 Upload request received for party:");
+        System.out.println("  - Party ID: " + partyId);
+        System.out.println("  - Document type: " + documentType);
+        System.out.println("  - File: " + file.getOriginalFilename());
+        System.out.println("  - Expiry date: " + expiryDate);
+        System.out.println("  - Comments: " + comments);
+
+        DocumentDto dto = documentService.uploadDocumentForParty(partyId, documentType, file, expiryDate, comments);
+        return new ResponseEntity<>(dto, HttpStatus.CREATED);
     }
 
-    @GetMapping("/customer/{basicNumber}/outstanding")
-    public ResponseEntity<Boolean> hasOutstandingDocuments(@PathVariable String basicNumber) {
-        boolean hasOutstanding = documentService.hasOutstandingDocuments(basicNumber);
-        return ResponseEntity.ok(hasOutstanding);
+    /**
+     * Legacy endpoint for backward compatibility
+     */
+    @PostMapping("/upload")
+    @PreAuthorize("hasAuthority('document:upload')")
+    public ResponseEntity<DocumentDto> uploadDocument(
+            @RequestParam("caseId") String caseId,
+            @RequestParam("documentType") String documentType,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "expiryDate", required = false) String expiryDate,
+            @RequestParam(value = "comments", required = false) String comments) throws IOException {
+
+        // Default to case upload for backward compatibility
+        return uploadDocumentForCase(caseId, documentType, file, expiryDate, comments);
     }
 
-    @GetMapping("/customer/{basicNumber}/outstanding-list")
-    public ResponseEntity<List<String>> getOutstandingDocumentsList(@PathVariable String basicNumber) {
-        List<String> outstandingDocs = documentService.getOutstandingDocumentsList(basicNumber);
-        return ResponseEntity.ok(outstandingDocs);
+    /**
+     * Get all documents for a case (including party documents)
+     */
+    @GetMapping("/case/{caseId}")
+    @PreAuthorize("hasAuthority('case:read')")
+    public ResponseEntity<List<DocumentDto>> getDocumentsForCase(@PathVariable String caseId) {
+        return ResponseEntity.ok(documentService.getAllDocumentsForCase(caseId));
     }
 
-    @PatchMapping("/customer/{basicNumber}/{filename}/status")
-    public ResponseEntity<Void> updateDocumentStatus(
-            @PathVariable String basicNumber,
-            @PathVariable String filename,
-            @RequestParam DocumentStatus status) {
-
-        documentService.updateDocumentStatus(basicNumber, filename, status);
-        return ResponseEntity.ok().build();
+    /**
+     * Get documents for a party
+     */
+    @GetMapping("/party/{partyId}")
+    @PreAuthorize("hasAuthority('case:read')")
+    public ResponseEntity<List<DocumentDto>> getDocumentsForParty(@PathVariable String partyId) {
+        return ResponseEntity.ok(documentService.getDocumentsForParty(partyId));
     }
 
-    @PostMapping("/customer/{basicNumber}/{filename}/upload")
-    public ResponseEntity<UploadResultDTO> uploadDocument(
-            @PathVariable String basicNumber,
-            @PathVariable String filename,
-            @RequestParam(required = false) String expiryDate,
-            @RequestParam("file") MultipartFile file) {
+    /**
+     * Update document status
+     */
+    @PatchMapping("/{documentId}/status")
+    @PreAuthorize("hasAuthority('document:verify')")
+    public ResponseEntity<DocumentDto> updateDocumentStatus(
+            @PathVariable Long documentId,
+            @RequestParam String status,
+            @RequestParam(required = false) String rejectionReason) {
 
-        UploadResultDTO result = documentService.uploadDocument(basicNumber, filename, file, expiryDate);
-        return ResponseEntity.ok(result);
+        DocumentDto dto = documentService.updateDocumentStatus(documentId, status, rejectionReason);
+        return ResponseEntity.ok(dto);
     }
 
-    @GetMapping("/customer/{basicNumber}/category/{category}")
-    public ResponseEntity<List<DocumentDTO>> getDocumentsByCategory(
-            @PathVariable String basicNumber,
-            @PathVariable DocumentCategory category) {
+    /**
+     * Get document status summary
+     */
+    @GetMapping("/status-summary/{ownerType}/{ownerId}")
+    @PreAuthorize("hasAuthority('case:read')")
+    public ResponseEntity<DocumentStatusSummary> getDocumentStatusSummary(
+            @PathVariable String ownerType,
+            @PathVariable String ownerId) {
 
-        List<DocumentDTO> documents = documentService.getDocumentsByCategory(basicNumber, category);
-        return ResponseEntity.ok(documents);
+        return ResponseEntity.ok(documentService.getDocumentStatusSummary(ownerType, ownerId));
     }
 
-    @GetMapping("/customer/{basicNumber}/progress")
-    public ResponseEntity<Integer> getDocumentUploadProgress(@PathVariable String basicNumber) {
-        int progress = documentService.getDocumentUploadProgress(basicNumber);
-        return ResponseEntity.ok(progress);
+    /**
+     * Download document
+     */
+    @GetMapping("/download/{documentId}")
+    @PreAuthorize("hasAuthority('document:read')")
+    public void downloadDocument(@PathVariable Long documentId, HttpServletResponse response) throws IOException {
+        Document doc = documentService.getDocumentWithContent(documentId)
+                .orElseThrow(() -> new RuntimeException("Document not found"));
+
+        response.setContentType(doc.getMimeType());
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION,
+                "attachment; filename=\"" + doc.getOriginalFilename() + "\"");
+        response.setContentLengthLong(doc.getSizeInBytes());
+        response.getOutputStream().write(doc.getContent());
+        response.getOutputStream().flush();
     }
 
-    @GetMapping("/customer/{basicNumber}/validate")
-    public ResponseEntity<DocumentValidationResultDTO> validateDocuments(@PathVariable String basicNumber) {
-        DocumentValidationResultDTO result = documentService.validateDocuments(basicNumber);
-        return ResponseEntity.ok(result);
-    }
-
-    @GetMapping("/categories")
-    public ResponseEntity<List<DocumentCategory>> getDocumentCategories() {
-        List<DocumentCategory> categories = documentService.getDocumentCategories();
-        return ResponseEntity.ok(categories);
-    }
+    // REMOVED: makeDocumentCurrentForCase endpoint
+    // REMOVED: makeDocumentCurrent endpoint
+    // The "make current" functionality is now handled in CaseController
 }
