@@ -141,9 +141,10 @@ public interface CaseMapper {
     @Mapping(target = "lastModifiedDate", ignore = true)
     CallReport toEntity(CallReportDto dto);
 
+    // To this (map performedBy to createdBy):
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "ownerCase", ignore = true)
-    @Mapping(target = "createdBy", ignore = true)
+    @Mapping(source = "performedBy", target = "createdBy")  // <-- MAP performedBy to createdBy!
     @Mapping(target = "createdDate", ignore = true)
     @Mapping(target = "lastModifiedBy", ignore = true)
     @Mapping(target = "lastModifiedDate", ignore = true)

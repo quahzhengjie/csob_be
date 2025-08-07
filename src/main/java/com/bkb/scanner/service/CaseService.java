@@ -4,11 +4,15 @@ import com.bkb.scanner.dto.*;
 import com.bkb.scanner.entity.*;
 import com.bkb.scanner.mapper.CaseMapper;
 import com.bkb.scanner.repository.*;
+import jakarta.persistence.EntityManager;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
@@ -32,6 +36,7 @@ public class CaseService {
     @Autowired private ActivityLogRepository activityLogRepository;
     @Autowired private CaseMapper caseMapper;
     @Autowired private PartyRepository partyRepository;
+    @Autowired private EntityManager entityManager;
 
     @Transactional(readOnly = true)
     public List<CaseDto> getAllCases() {
@@ -71,20 +76,9 @@ public class CaseService {
         // Set customerId same as caseId - maintains backward compatibility
         entityData.setCustomerId(caseId);
 
-        // ADD DEBUGGING HERE
-        System.out.println("=== CREATE CASE DEBUG ===");
-        System.out.println("Request received: " + request);
-
         // Handle the new entity details if provided
         if (request.getEntity() != null) {
             CaseCreationRequest.EntityDetails details = request.getEntity();
-
-            System.out.println("Entity details found:");
-            System.out.println("- BasicNumber: " + details.getBasicNumber());
-            System.out.println("- BusinessActivity: " + details.getBusinessActivity());
-            System.out.println("- ContactPerson: " + details.getContactPerson());
-            System.out.println("- ContactEmail: " + details.getContactEmail());
-            System.out.println("- ContactPhone: " + details.getContactPhone());
 
             // Required field
             entityData.setBasicNumber(details.getBasicNumber());
@@ -111,22 +105,16 @@ public class CaseService {
             // NEW FIELDS in creation
             if (details.getBusinessActivity() != null) {
                 entityData.setBusinessActivity(details.getBusinessActivity());
-                System.out.println("SET BusinessActivity: " + entityData.getBusinessActivity());
             }
             if (details.getContactPerson() != null) {
                 entityData.setContactPerson(details.getContactPerson());
-                System.out.println("SET ContactPerson: " + entityData.getContactPerson());
             }
             if (details.getContactEmail() != null) {
                 entityData.setContactEmail(details.getContactEmail());
-                System.out.println("SET ContactEmail: " + entityData.getContactEmail());
             }
             if (details.getContactPhone() != null) {
                 entityData.setContactPhone(details.getContactPhone());
-                System.out.println("SET ContactPhone: " + entityData.getContactPhone());
             }
-        } else {
-            System.out.println("NO ENTITY DETAILS IN REQUEST!");
         }
 
         // Set default values for any required fields not in the request
@@ -142,25 +130,20 @@ public class CaseService {
 
         newCase.setEntityData(entityData);
 
-        System.out.println("Before save - EntityData:");
-        System.out.println("- BusinessActivity: " + entityData.getBusinessActivity());
-        System.out.println("- ContactPerson: " + entityData.getContactPerson());
-        System.out.println("- ContactEmail: " + entityData.getContactEmail());
-        System.out.println("- ContactPhone: " + entityData.getContactPhone());
-
         Case savedCase = caseRepository.save(newCase);
 
-        System.out.println("After save - Saved case entity data:");
-        System.out.println("- BusinessActivity: " + savedCase.getEntityData().getBusinessActivity());
-        System.out.println("- ContactPerson: " + savedCase.getEntityData().getContactPerson());
-        System.out.println("=== END DEBUG ===");
-
-        // Log the activity
+        // Log the activity with proper user attribution
         ActivityLog log = new ActivityLog();
         log.setType("CASE_CREATED");
         log.setDetails("Case created with entity: " + request.getEntityName() + " (Type: " + request.getEntityType() + ")");
         log.setOwnerCase(savedCase);
-        activityLogRepository.save(log);
+
+        String currentUserId = getCurrentUserId();
+        System.out.println("🔴 [CASE CREATE] Setting createdBy to: " + currentUserId);
+        log.setCreatedBy(currentUserId);
+
+        ActivityLog savedLog = activityLogRepository.save(log);
+        System.out.println("🔴 [CASE CREATE] Saved log with createdBy: " + savedLog.getCreatedBy());
 
         return caseMapper.toDto(savedCase);
     }
@@ -196,10 +179,59 @@ public class CaseService {
 
     @Transactional
     public ActivityLogDto addActivityLog(String caseId, ActivityLogDto activityDto) {
-        Case ownerCase = caseRepository.findById(caseId).orElseThrow(() -> new RuntimeException("Case not found"));
+        System.out.println("🔵 === ACTIVITY LOG SERVICE METHOD CALLED ===");
+        System.out.println("🔵 CaseId: " + caseId);
+        System.out.println("🔵 ActivityDto type: " + activityDto.getType());
+        System.out.println("🔵 ActivityDto details: " + activityDto.getDetails());
+        System.out.println("🔵 ActivityDto performedBy: " + activityDto.getPerformedBy());
+
+        Case ownerCase = caseRepository.findById(caseId)
+                .orElseThrow(() -> new RuntimeException("Case not found"));
+
+        // Map DTO to entity - the mapper should map performedBy to createdBy
         ActivityLog log = caseMapper.toEntity(activityDto);
         log.setOwnerCase(ownerCase);
+
+        System.out.println("🔵 After mapping - Entity createdBy: " + log.getCreatedBy());
+
+        // Force set the createdBy if it's still null or wrong
+        if (activityDto.getPerformedBy() != null && !activityDto.getPerformedBy().isEmpty()) {
+            System.out.println("🔵 Manually setting createdBy to: " + activityDto.getPerformedBy());
+            log.setCreatedBy(activityDto.getPerformedBy());
+        }
+
+        System.out.println("🔵 Before save - Entity createdBy: " + log.getCreatedBy());
+
+        // Save the log
         ActivityLog savedLog = activityLogRepository.save(log);
+
+        System.out.println("🔵 After save - Saved createdBy: " + savedLog.getCreatedBy());
+
+        // If JPA Auditing overrode it, force update with native query
+        if (activityDto.getPerformedBy() != null &&
+                !activityDto.getPerformedBy().isEmpty() &&
+                !activityDto.getPerformedBy().equals(savedLog.getCreatedBy())) {
+
+            System.out.println("🔵 JPA Auditing overrode! Forcing update...");
+            System.out.println("🔵 Expected: " + activityDto.getPerformedBy());
+            System.out.println("🔵 Got: " + savedLog.getCreatedBy());
+
+            // Force update with native query
+            int updated = entityManager.createNativeQuery(
+                            "UPDATE csob_activity_logs SET created_by = :performedBy WHERE id = :id")
+                    .setParameter("performedBy", activityDto.getPerformedBy())
+                    .setParameter("id", savedLog.getId())
+                    .executeUpdate();
+
+            System.out.println("🔵 Native query updated " + updated + " rows");
+
+            // Refresh the entity
+            entityManager.refresh(savedLog);
+            System.out.println("🔵 After refresh - Final createdBy: " + savedLog.getCreatedBy());
+        }
+
+        System.out.println("🔵 === END ACTIVITY LOG SERVICE ===");
+
         return caseMapper.toDto(savedLog);
     }
 
@@ -291,12 +323,18 @@ public class CaseService {
 
         Case updatedCase = caseRepository.save(caseEntity);
 
-        // Log the update activity
+        // Log the update activity with proper user attribution
         ActivityLog log = new ActivityLog();
         log.setType("ENTITY_UPDATED");
         log.setDetails("Entity profile updated");
         log.setOwnerCase(updatedCase);
-        activityLogRepository.save(log);
+
+        String currentUserId = getCurrentUserId();
+        System.out.println("🔴 [ENTITY UPDATE] Setting createdBy to: " + currentUserId);
+        log.setCreatedBy(currentUserId);
+
+        ActivityLog savedLog = activityLogRepository.save(log);
+        System.out.println("🔴 [ENTITY UPDATE] Saved log with createdBy: " + savedLog.getCreatedBy());
 
         return caseMapper.toDto(updatedCase);
     }
@@ -329,12 +367,18 @@ public class CaseService {
 
         CallReport updatedReport = callReportRepository.save(report);
 
-        // Log the activity
+        // Log the activity with proper user attribution
         ActivityLog log = new ActivityLog();
         log.setType("CALL_REPORT_UPDATED");
         log.setDetails("Updated call report ID: " + reportId);
         log.setOwnerCase(ownerCase);
-        activityLogRepository.save(log);
+
+        String currentUserId = getCurrentUserId();
+        System.out.println("🔴 [CALL REPORT UPDATE] Setting createdBy to: " + currentUserId);
+        log.setCreatedBy(currentUserId);
+
+        ActivityLog savedLog = activityLogRepository.save(log);
+        System.out.println("🔴 [CALL REPORT UPDATE] Saved log with createdBy: " + savedLog.getCreatedBy());
 
         return caseMapper.toDto(updatedReport);
     }
@@ -364,33 +408,71 @@ public class CaseService {
 
         callReportRepository.save(report);
 
-        // Log the activity
+        // Log the activity with proper user attribution
         ActivityLog log = new ActivityLog();
         log.setType("CALL_REPORT_DELETED");
         log.setDetails(String.format("Soft deleted call report ID: %d. Reason: %s",
                 reportId, deletionReason));
         log.setOwnerCase(ownerCase);
-        activityLogRepository.save(log);
-    }
 
-    // Helper method to get current user - implement based on your security setup
-    private String getCurrentUserId() {
-        // With Spring Security:
-        // Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        // if (auth != null && auth.getPrincipal() instanceof UserDetails) {
-        //     return ((UserDetails) auth.getPrincipal()).getUsername();
-        // }
-        return "USER-001"; // Placeholder - replace with actual implementation
-    }
+        String currentUserId = getCurrentUserId();
+        System.out.println("🔴 [CALL REPORT DELETE] Setting createdBy to: " + currentUserId);
+        log.setCreatedBy(currentUserId);
 
-    // =====================================================================
-    // NEW METHODS FOR DASHBOARD AND OPTIMIZED CASE LISTING
-    // =====================================================================
+        ActivityLog savedLog = activityLogRepository.save(log);
+        System.out.println("🔴 [CALL REPORT DELETE] Saved log with createdBy: " + savedLog.getCreatedBy());
+    }
 
     /**
-     * Get cases with server-side filtering, sorting, and pagination
-     * Database-agnostic implementation
+     * Get current user from Spring Security context (same pattern as DocumentService)
      */
+    private User getCurrentUser() {
+        System.out.println("🟡 === getCurrentUser() CALLED ===");
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        if (authentication == null) {
+            System.out.println("🟡 Authentication is NULL");
+            return null;
+        }
+
+        System.out.println("🟡 Authentication exists: " + authentication.getName());
+        System.out.println("🟡 Is authenticated: " + authentication.isAuthenticated());
+        System.out.println("🟡 Principal type: " + authentication.getPrincipal().getClass().getName());
+
+        if (authentication.isAuthenticated() && !"anonymousUser".equals(authentication.getPrincipal())) {
+            String username = authentication.getName();
+            System.out.println("🟡 Looking up user by username: " + username);
+
+            Optional<User> userOpt = userRepository.findByUsername(username);
+            if (userOpt.isPresent()) {
+                User user = userOpt.get();
+                System.out.println("🟡 Found user: " + user.getUserId() + " (" + user.getName() + ")");
+                return user;
+            } else {
+                System.out.println("🟡 User not found in database for username: " + username);
+                throw new RuntimeException("User not found: " + username);
+            }
+        }
+
+        System.out.println("🟡 Returning null (system user)");
+        return null;
+    }
+
+    /**
+     * Helper method to get current user ID
+     */
+    private String getCurrentUserId() {
+        System.out.println("🟢 === getCurrentUserId() CALLED ===");
+        User currentUser = getCurrentUser();
+        String userId = currentUser != null ? currentUser.getUserId() : "SYSTEM";
+        System.out.println("🟢 Returning userId: " + userId);
+        return userId;
+    }
+
+    // =====================================================================
+    // REST OF THE METHODS (pagination, etc.) - unchanged
+    // =====================================================================
+
     @Transactional(readOnly = true)
     public CasesPageDto getCasesWithFilters(
             Integer page,
@@ -400,10 +482,6 @@ public class CaseService {
             String statusFilter,
             String sortBy,
             String sortOrder) {
-
-        System.out.println("Fetching cases - page: " + page + ", limit: " + limit +
-                ", search: " + search + ", riskLevel: " + riskLevelFilter +
-                ", status: " + statusFilter + ", sortBy: " + sortBy + ", sortOrder: " + sortOrder);
 
         // Parse filters
         List<String> riskLevels = parseFilter(riskLevelFilter);
